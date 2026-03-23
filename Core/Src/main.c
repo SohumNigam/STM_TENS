@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdbool.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -56,6 +56,7 @@ void SystemClock_Config(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static void TIM1_Init(void);
+static void TIM2_Init(void);
 static void GPIO_Init(void);
 /* USER CODE END PFP */
 
@@ -95,6 +96,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   TIM1_Init();
+  TIM2_Init();
+
   GPIO_Init();
 
   /* USER CODE END 2 */
@@ -217,25 +220,14 @@ static void GPIO_Init(void){
 
 /* USER CODE BEGIN 4 */
 static void TIM1_Init(void){
-    __HAL_RCC_TIM1_CLK_ENABLE(); // Enable TIM1 clock
 
-
-
-
-
-    /*
-	uint32_t cycle_ticks = (84000000/(TIM1->PSC + 1)/(TIM1->ARR))/freq;
-
-	phase_0 = (cycle_ticks - 50)/2;
-	phase_1 = 25;
-	phase_2 = (cycle_ticks - 50)/2;
-	phase_3 = 25;
-     */
+	RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
+	(void)RCC->APB2ENR;
 
 
     TIM1->PSC = 8399;       // Prescaler
 
-    uint8_t freq = 2;
+    uint8_t freq = 20;
 
     uint32_t ARR_VAL  = (84000000 / (TIM1->PSC + 1) / freq) - 1;
 
@@ -264,69 +256,51 @@ static void TIM1_Init(void){
 	TIM1->CR1 |= TIM_CR1_CEN;
 
 
-    //HAL_NVIC_SetPriority(TIM1_UP_TIM10_IRQn, 0, 0);
-    //HAL_NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
-
-
 
 }
-/*
-uint8_t state = 0;
 
-uint32_t counter = 0;
+static void TIM2_Init(void){
 
-void TIM1_UP_TIM10_IRQHandler(void){
-    if (TIM1->SR & TIM_SR_UIF){
-        TIM1->SR &= ~TIM_SR_UIF;
+	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
 
-        counter += 1;
+	(void)RCC->APB1ENR;//confirm the write
 
-        switch(state){
 
-        case 0:
-        	if(counter >= phase_0){
-				GPIOC->ODR &= ~GPIO_ODR_OD0;
-				GPIOC->ODR &= ~GPIO_ODR_OD1;
-        		state = 1;
-        		counter = 0;
-        	}
-        	break;
+	TIM2->PSC = 8399;    // divide 84MHz → 10kHz
+	TIM2->ARR = 9999;    // 10kHz / (9999+1) = 1Hz
 
-        case 1:
-        	if(counter >= phase_1){
-				GPIOC->ODR |= GPIO_ODR_OD0;
-				GPIOC->ODR &= ~GPIO_ODR_OD1;
-        		state = 2;
-        		counter = 0;
-        	}
+    TIM2->EGR |= TIM_EGR_UG;
 
-        	break;
-        case 2:
 
-            if(counter >= phase_2){
-				GPIOC->ODR &= ~GPIO_ODR_OD0;
-				GPIOC->ODR &= ~GPIO_ODR_OD1;
-            	state = 3;
-          		counter = 0;
-            }
-            break;
 
-        case 3:
 
-            if(counter >= phase_3){
-				GPIOC->ODR |= GPIO_ODR_OD1;
-				GPIOC->ODR &= ~GPIO_ODR_OD0;
-        		state = 0;
-        		counter = 0;
-        	}
-            break;
 
+	TIM2->DIER |= TIM_DIER_UIE;
+	TIM2->CR1 |= TIM_CR1_CEN;
+
+
+	NVIC_SetPriority(TIM2_IRQn, 0);
+	NVIC_EnableIRQ(TIM2_IRQn);
+}
+
+bool MAIN_OUTPUT = 1;
+
+void TIM2_IRQHandler(void){
+    if (TIM2->SR & TIM_SR_UIF){
+        TIM2->SR &= ~TIM_SR_UIF;
+
+        if(MAIN_OUTPUT){
+        	TIM1->BDTR &= ~TIM_BDTR_MOE;
+        	MAIN_OUTPUT = 0;
+        }else{
+        	TIM1->BDTR |= TIM_BDTR_MOE;
+        	MAIN_OUTPUT = 1;
         }
 
 
     }
 }
-*/
+
 
 /* USER CODE END 4 */
 
