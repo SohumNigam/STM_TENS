@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdbool.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,10 +59,14 @@ static void MX_USART2_UART_Init(void);
 static void TIM1_Init(void);
 static void TIM2_Init(void);
 static void GPIO_Init(void);
+static void ADC1_Init(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
+
 
 /* USER CODE END 0 */
 
@@ -100,12 +105,22 @@ int main(void)
 
   GPIO_Init();
 
+  ADC1_Init();
+
+
+
+
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+
+
+
 
     /* USER CODE END WHILE */
 
@@ -179,9 +194,34 @@ static void MX_USART2_UART_Init(void)
   * @retval None
   */
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+
+static void ADC1_Init(void){
+
+	//ADC1_IN1 is on PA0**********
+
+	RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
+
+	ADC1->CR1 &= ~ADC_CR1_RES;//12 bit resolution
+
+	ADC1->JSQR &= ~ADC_JSQR_JL;
+
+	ADC1->JSQR = (1 << ADC_JSQR_JSQ1_Pos); // Channel 1
+
+	ADC1->CR2 |= ADC_CR2_JEXTEN_0; // rising edge
+
+	ADC1->CR2 &= ~ADC_CR2_JEXTSEL;
+
+	ADC1->CR2 |= ADC_CR2_ADON;
+
+}
+
+
+
 static void GPIO_Init(void){
+
 	//clock initializations
 	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;
+	RCC->AHB1ENR |= RCC_AHB1ENR_GPIOCEN;
 
 
 
@@ -193,11 +233,15 @@ static void GPIO_Init(void){
 	GPIOA->MODER &= ~GPIO_MODER_MODER8_0;
 	GPIOA->MODER |= GPIO_MODER_MODER8_1;
 
+	//PA0 analog input
+	GPIOA->MODER |= GPIO_MODER_MODER0_0;
+	GPIOA->MODER |= GPIO_MODER_MODER0_1;
+
 	//Set output type as push-pull
 	GPIOA->OTYPER &= ~(GPIO_OTYPER_OT7|GPIO_OTYPER_OT8); //PA7 AND PA8
 
 	//no pull up or pull down
-	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPD7|GPIO_PUPDR_PUPD8);
+	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPD7|GPIO_PUPDR_PUPD8|GPIO_PUPDR_PUPD0);
 
 	//output speed
 	GPIOA->OSPEEDR |= GPIO_OSPEEDR_OSPEED7|GPIO_OSPEEDR_OSPEED8;
@@ -227,7 +271,7 @@ static void TIM1_Init(void){
 
     TIM1->PSC = 8399;       // Prescaler
 
-    uint8_t freq = 20;
+    uint8_t freq = 50;
 
     uint32_t ARR_VAL  = (84000000 / (TIM1->PSC + 1) / freq) - 1;
 
@@ -236,24 +280,48 @@ static void TIM1_Init(void){
     TIM1->ARR = ARR_VAL;      // Auto-reload
     TIM1->CCR1 = ARR_VAL/2;
 
+    TIM1->CCR4 = ARR_VAL/4;
+
     TIM1->EGR |= TIM_EGR_UG; // Generate an update event to load PSC/ARR
 
     TIM1->CCMR1 &= ~TIM_CCMR1_OC1M_0; //Physical pin D7 on arduino headers set to output PWM
     TIM1->CCMR1 |= TIM_CCMR1_OC1M_1;
     TIM1->CCMR1 |= TIM_CCMR1_OC1M_2;
 
+
+    TIM1->CCMR2 &= ~TIM_CCMR2_OC4M_0; //PWM  mode
+    TIM1->CCMR2 |= TIM_CCMR2_OC4M_1;
+    TIM1->CCMR2 |= TIM_CCMR2_OC4M_2;
+
+
+
+    //enable preload
     TIM1->CCMR1 |= TIM_CCMR1_OC1PE;
+    TIM1->CCMR2 |= TIM_CCMR2_OC4PE;
+
 
     TIM1->CCER &= ~TIM_CCER_CC1NP;
 
+
+    //ch1
     TIM1->CCER |= TIM_CCER_CC1E; //Enable the output and its complementary
     TIM1->CCER |= TIM_CCER_CC1NE;
 
+
+    //ch4
+    TIM1->CCER |= TIM_CCER_CC4E;
+
     //TIM1->BDTR |= TIM_BDTR_OSSI;
+
+    //TIM1->BDTR &= ~TIM_BDTR_DTG;
+    //TIM1->BDTR |= (0b111 << 5) | (0b11111 << 0);
+
+
+	TIM1->CR1 |= TIM_CR1_CEN;
+
 
 	TIM1->BDTR |= TIM_BDTR_MOE;
 
-	TIM1->CR1 |= TIM_CR1_CEN;
 
 
 
@@ -266,8 +334,8 @@ static void TIM2_Init(void){
 	(void)RCC->APB1ENR;//confirm the write
 
 
-	TIM2->PSC = 8399;    // divide 84MHz → 10kHz
-	TIM2->ARR = 9999;    // 10kHz / (9999+1) = 1Hz
+	TIM2->PSC = 839;    // divide 84MHz → 1MHz
+	TIM2->ARR = 100;
 
     TIM2->EGR |= TIM_EGR_UG;
 
