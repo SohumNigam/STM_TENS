@@ -45,11 +45,6 @@ UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
-volatile uint32_t phase_0;
-volatile uint32_t phase_1;
-volatile uint32_t phase_2;
-volatile uint32_t phase_3;
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -64,6 +59,12 @@ static void ADC1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+
+
+volatile uint8_t freq;
+volatile uint32_t ARR_VAL;
+volatile uint8_t ARR_DIV;
 
 
 
@@ -101,12 +102,24 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   TIM1_Init();
-  TIM2_Init();
+  //TIM2_Init();
 
   GPIO_Init();
 
   ADC1_Init();
 
+
+
+  void set_phase(float scale_val, uint8_t dead_time){
+
+      uint16_t phase_duration = (ARR_VAL/scale_val) - dead_time;//the 2 in this equation cotrolls overall stimulation (2 is the max value)
+
+      //output registers
+      TIM1->CCR1 = ARR_VAL - (phase_duration/2); //start +phase
+      TIM1->CCR2 = (phase_duration/2); //end +phase
+      TIM1->CCR3 = (phase_duration/2) + dead_time; //start -phase
+      TIM1->CCR4 = phase_duration + (phase_duration/2) + dead_time; //end -phase
+  }
 
 
 
@@ -115,12 +128,8 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
+ while (1)
   {
-
-
-
-
 
     /* USER CODE END WHILE */
 
@@ -197,8 +206,6 @@ static void MX_USART2_UART_Init(void)
 
 static void ADC1_Init(void){
 
-	//ADC1_IN1 is on PA0**********
-
 	RCC->APB2ENR |= RCC_APB2ENR_ADC1EN;
 
 	ADC1->CR1 &= ~ADC_CR1_RES;//12 bit resolution
@@ -207,11 +214,20 @@ static void ADC1_Init(void){
 
 	ADC1->JSQR = (1 << ADC_JSQR_JSQ1_Pos); // Channel 1
 
+	ADC1->SMPR2 &= ~ADC_SMPR2_SMP1;
+	ADC1->SMPR2 |= ADC_SMPR2_SMP1_0;
+
+
 	ADC1->CR2 |= ADC_CR2_JEXTEN_0; // rising edge
 
 	ADC1->CR2 &= ~ADC_CR2_JEXTSEL;
+	ADC1->CR2 |= ADC_CR2_JEXTSEL_0;//TIM1_TRGO event
+
+
 
 	ADC1->CR2 |= ADC_CR2_ADON;
+
+	for (int i=0; i<100000000000; i++){}
 
 }
 
@@ -227,11 +243,11 @@ static void GPIO_Init(void){
 
 	//configre pin as alternate function
 	//PA7
-	GPIOA->MODER &= ~GPIO_MODER_MODER7_0;
-	GPIOA->MODER |= GPIO_MODER_MODER7_1;
+	GPIOA->MODER |= GPIO_MODER_MODER7_0;
+	GPIOA->MODER &= ~GPIO_MODER_MODER7_1;
 	//PA8
-	GPIOA->MODER &= ~GPIO_MODER_MODER8_0;
-	GPIOA->MODER |= GPIO_MODER_MODER8_1;
+	GPIOA->MODER |= GPIO_MODER_MODER8_0;
+	GPIOA->MODER &= ~GPIO_MODER_MODER8_1;
 
 	//PA0 analog input
 	GPIOA->MODER |= GPIO_MODER_MODER0_0;
@@ -243,26 +259,16 @@ static void GPIO_Init(void){
 	//no pull up or pull down
 	GPIOA->PUPDR &= ~(GPIO_PUPDR_PUPD7|GPIO_PUPDR_PUPD8|GPIO_PUPDR_PUPD0);
 
-	//output speed
+	//output speed max
 	GPIOA->OSPEEDR |= GPIO_OSPEEDR_OSPEED7|GPIO_OSPEEDR_OSPEED8;
 
-	//ALTERNATE FUNCTION SELECTION
-	//AF1
-	GPIOA->AFR[0] |= GPIO_AFRL_AFRL7_0;
-	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL7_1;
-	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL7_2;
-	GPIOA->AFR[0] &= ~GPIO_AFRL_AFRL7_3;
-
-	GPIOA->AFR[1] |= GPIO_AFRH_AFRH0_0;
-	GPIOA->AFR[1] &= ~GPIO_AFRH_AFRH0_1;
-	GPIOA->AFR[1] &= ~GPIO_AFRH_AFRH0_2;
-	GPIOA->AFR[1] &= ~GPIO_AFRH_AFRH0_3;
 
 }
 
   /* USER CODE END MX_GPIO_Init_2 */
 
 /* USER CODE BEGIN 4 */
+
 static void TIM1_Init(void){
 
 	RCC->APB2ENR |= RCC_APB2ENR_TIM1EN;
@@ -271,60 +277,76 @@ static void TIM1_Init(void){
 
     TIM1->PSC = 8399;       // Prescaler
 
-    uint8_t freq = 50;
+	freq = 50;
 
-    uint32_t ARR_VAL  = (84000000 / (TIM1->PSC + 1) / freq) - 1;
+	ARR_VAL  = (84000000 / (TIM1->PSC + 1) / freq) - 1;
 
 
     //TIM1->CR1 |= TIM_CR1_ARPE;       //Auto reload preload
-    TIM1->ARR = ARR_VAL;      // Auto-reload
-    TIM1->CCR1 = ARR_VAL/2;
-
-    TIM1->CCR4 = ARR_VAL/4;
-
-    TIM1->EGR |= TIM_EGR_UG; // Generate an update event to load PSC/ARR
-
-    TIM1->CCMR1 &= ~TIM_CCMR1_OC1M_0; //Physical pin D7 on arduino headers set to output PWM
-    TIM1->CCMR1 |= TIM_CCMR1_OC1M_1;
-    TIM1->CCMR1 |= TIM_CCMR1_OC1M_2;
+    TIM1->ARR = ARR_VAL;
 
 
-    TIM1->CCMR2 &= ~TIM_CCMR2_OC4M_0; //PWM  mode
-    TIM1->CCMR2 |= TIM_CCMR2_OC4M_1;
-    TIM1->CCMR2 |= TIM_CCMR2_OC4M_2;
+    //phase_duration cant be grater than (ARR_VAL/2)
+    //phase duration = 25% by default (not accounting for deadtime)
+
+    set_phase(4, 15);//divisor, deadtime
 
 
+    TIM1->EGR |= TIM_EGR_UG; // Generate an update event to load registers
+
+
+    TIM1->CR2 &= ~TIM_CR2_MMS;//CLEAR
+    TIM1->CR2 |= TIM_CR2_MMS_1;//triggers TRGO on update event
 
     //enable preload
     TIM1->CCMR1 |= TIM_CCMR1_OC1PE;
+    TIM1->CCMR1 |= TIM_CCMR1_OC2PE;
+    TIM1->CCMR2 |= TIM_CCMR2_OC3PE;
     TIM1->CCMR2 |= TIM_CCMR2_OC4PE;
 
 
-    TIM1->CCER &= ~TIM_CCER_CC1NP;
-
-
-    //ch1
-    TIM1->CCER |= TIM_CCER_CC1E; //Enable the output and its complementary
-    TIM1->CCER |= TIM_CCER_CC1NE;
-
-
-    //ch4
-    TIM1->CCER |= TIM_CCER_CC4E;
-
-    //TIM1->BDTR |= TIM_BDTR_OSSI;
-
-    //TIM1->BDTR &= ~TIM_BDTR_DTG;
-    //TIM1->BDTR |= (0b111 << 5) | (0b11111 << 0);
+    //enabable interrupts
+    TIM1->DIER |= TIM_DIER_CC1IE | TIM_DIER_CC2IE | TIM_DIER_CC3IE | TIM_DIER_CC4IE;
 
 
 	TIM1->CR1 |= TIM_CR1_CEN;
 
+	NVIC_SetPriority(TIM1_CC_IRQn, 0);
+	NVIC_EnableIRQ(TIM1_CC_IRQn);
 
-	TIM1->BDTR |= TIM_BDTR_MOE;
+}
 
 
+void TIM1_CC_IRQHandler(void)
+{
+    if (TIM1->SR & TIM_SR_CC1IF){
+        TIM1->SR &= ~TIM_SR_CC1IF;  // clear flag
+
+        GPIOA->ODR |= GPIO_PIN_7;
+
+    }
+
+    if (TIM1->SR & TIM_SR_CC2IF){
+        TIM1->SR &= ~TIM_SR_CC2IF;
+
+        GPIOA->ODR &= ~GPIO_PIN_7;
+
+    }
+
+    if (TIM1->SR & TIM_SR_CC3IF){
+            TIM1->SR &= ~TIM_SR_CC3IF;
+
+            GPIOA->ODR |= GPIO_PIN_8;
+
+    }
 
 
+    if (TIM1->SR & TIM_SR_CC4IF){
+                TIM1->SR &= ~TIM_SR_CC4IF;
+
+                GPIOA->ODR &= ~GPIO_PIN_8;
+
+    }
 }
 
 static void TIM2_Init(void){
@@ -334,8 +356,8 @@ static void TIM2_Init(void){
 	(void)RCC->APB1ENR;//confirm the write
 
 
-	TIM2->PSC = 839;    // divide 84MHz → 1MHz
-	TIM2->ARR = 100;
+	TIM2->PSC = 83;    // divide 84MHz → 1MHz
+	TIM2->ARR = 10;
 
     TIM2->EGR |= TIM_EGR_UG;
 
