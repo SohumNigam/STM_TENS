@@ -66,6 +66,23 @@ volatile uint8_t freq;
 volatile uint32_t ARR_VAL;
 volatile uint8_t ARR_DIV;
 
+volatile float next_scale_val;
+volatile bool update_pending;
+
+
+
+void set_phase(float scale, uint8_t dead_time){
+
+    uint16_t phase_duration = (ARR_VAL-scale) - dead_time;//the scale_val in this equation cotrolls overall stimulation (ARR/2 is the max value)
+
+    //output registers
+    TIM1->CCR1 = ARR_VAL - (phase_duration/2); //start +phase
+    TIM1->CCR2 = (phase_duration/2); //end +phase
+    TIM1->CCR3 = (phase_duration/2) + dead_time; //start -phase
+    TIM1->CCR4 = phase_duration + (phase_duration/2) + dead_time; //end -phase
+}
+
+
 
 
 
@@ -102,40 +119,123 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   TIM1_Init();
-  //TIM2_Init();
+  TIM2_Init();
 
   GPIO_Init();
 
   ADC1_Init();
 
 
-
-  void set_phase(float scale_val, uint8_t dead_time){
-
-      uint16_t phase_duration = (ARR_VAL/scale_val) - dead_time;//the 2 in this equation cotrolls overall stimulation (2 is the max value)
-
-      //output registers
-      TIM1->CCR1 = ARR_VAL - (phase_duration/2); //start +phase
-      TIM1->CCR2 = (phase_duration/2); //end +phase
-      TIM1->CCR3 = (phase_duration/2) + dead_time; //start -phase
-      TIM1->CCR4 = phase_duration + (phase_duration/2) + dead_time; //end -phase
-  }
-
-
-
-
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
- while (1)
+
+  float scale_val = 100;
+
+  int data;//adc input data
+  float V;//volts
+  float mA;//milliamps
+
+  float target_mA = 25.0;
+  float error;
+  float pid_p;
+  float pid_i = 0.0;
+  float pid_d;
+
+  float prev_error;
+
+  float max_step = 10.0f;
+
+  uint32_t last = TIM2->CNT;
+  uint32_t now;
+  uint32_t diff;
+  float dt;
+
+
+
+  //not fully tuned yet
+  float P = 0.5;
+  float I = 0.0;
+  float D = 0.0;
+
+  float correction_val;
+
+
+
+  while (1)
   {
 
-    /* USER CODE END WHILE */
 
+
+	  //ADC reading and comversions
+	  if (ADC1->SR & ADC_SR_JEOC) {
+	      ADC1->SR &= ~ADC_SR_JEOC;
+
+	      data = ADC1->JDR1;
+
+	      V = (float)data * 3.3f / 4095.0f;
+	      mA = V / 100 * 1000;
+
+
+		  //delta time calculations
+		  now = TIM2->CNT;
+
+		  diff = (now >= last) ? (now - last)
+		                       : (0xFFFFFFFF - last + now + 1);
+
+		  dt = (float)diff / 1000000; // seconds (if 1 MHz timer)
+		  last = now;
+
+
+
+
+
+		  //pid error correction
+		  error = target_mA - mA;
+
+
+
+		  pid_p = error * P;
+
+		  pid_i = ((0.25) * pid_i + error * dt) * I;//will "leak" to 0 overtime if error is small (requires extra tuning)
+
+		  pid_d = ((error - prev_error) / dt) * D;
+
+
+		  correction_val = pid_p + pid_i + pid_d;
+
+		  if (correction_val > max_step) correction_val = max_step;
+		  if (correction_val < -max_step) correction_val = -max_step;
+
+		  scale_val += correction_val;
+
+		  if(scale_val < 0.0){
+			  scale_val = 0.0;
+		  }
+
+		  if(scale_val > (float)TIM1->ARR/2){
+			  scale_val = (float)TIM1->ARR/2;
+		  }
+
+
+
+		  next_scale_val = scale_val;
+		  update_pending = true;
+
+
+
+		  prev_error = error;
+
+	  }
+
+
+    /* USER CODE END WHILE */
     /* USER CODE BEGIN 3 */
+
   }
   /* USER CODE END 3 */
+
 }
 
 /**
@@ -227,7 +327,6 @@ static void ADC1_Init(void){
 
 	ADC1->CR2 |= ADC_CR2_ADON;
 
-	for (int i=0; i<100000000000; i++){}
 
 }
 
@@ -289,7 +388,7 @@ static void TIM1_Init(void){
     //phase_duration cant be grater than (ARR_VAL/2)
     //phase duration = 25% by default (not accounting for deadtime)
 
-    set_phase(4, 15);//divisor, deadtime
+    set_phase(2, 15);//divisor, deadtime
 
 
     TIM1->EGR |= TIM_EGR_UG; // Generate an update event to load registers
@@ -308,11 +407,14 @@ static void TIM1_Init(void){
     //enabable interrupts
     TIM1->DIER |= TIM_DIER_CC1IE | TIM_DIER_CC2IE | TIM_DIER_CC3IE | TIM_DIER_CC4IE;
 
+    TIM1->DIER |= TIM_DIER_UIE;
 
+    //start tieme
 	TIM1->CR1 |= TIM_CR1_CEN;
 
 	NVIC_SetPriority(TIM1_CC_IRQn, 0);
 	NVIC_EnableIRQ(TIM1_CC_IRQn);
+    NVIC_EnableIRQ(TIM1_UP_TIM10_IRQn);
 
 }
 
@@ -349,6 +451,18 @@ void TIM1_CC_IRQHandler(void)
     }
 }
 
+void TIM1_UP_TIM10_IRQHandler(void)
+{
+    if (TIM1->SR & TIM_SR_UIF) {
+        TIM1->SR &= ~TIM_SR_UIF;
+
+        if (update_pending) {
+            set_phase(next_scale_val, 15);
+            update_pending = false;
+        }
+    }
+}
+
 static void TIM2_Init(void){
 
 	RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
@@ -357,7 +471,7 @@ static void TIM2_Init(void){
 
 
 	TIM2->PSC = 83;    // divide 84MHz → 1MHz
-	TIM2->ARR = 10;
+	TIM2->ARR = 0xFFFFFFFF;//max value
 
     TIM2->EGR |= TIM_EGR_UG;
 
@@ -365,14 +479,16 @@ static void TIM2_Init(void){
 
 
 
-	TIM2->DIER |= TIM_DIER_UIE;
+	//TIM2->DIER |= TIM_DIER_UIE;
 	TIM2->CR1 |= TIM_CR1_CEN;
 
 
-	NVIC_SetPriority(TIM2_IRQn, 0);
-	NVIC_EnableIRQ(TIM2_IRQn);
+	//NVIC_SetPriority(TIM2_IRQn, 0);
+	//NVIC_EnableIRQ(TIM2_IRQn);
 }
 
+
+/*
 bool MAIN_OUTPUT = 1;
 
 void TIM2_IRQHandler(void){
@@ -391,6 +507,7 @@ void TIM2_IRQHandler(void){
     }
 }
 
+*/
 
 /* USER CODE END 4 */
 
